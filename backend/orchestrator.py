@@ -31,7 +31,9 @@ from datetime import UTC, datetime
 
 from backend.agents.authority_support_checker import AuthoritySupportChecker
 from backend.agents.citation_extractor import CitationExtractor
+from backend.agents.confidence_scorer import ConfidenceScorer
 from backend.agents.cross_doc_checker import CrossDocConsistencyChecker
+from backend.agents.judicial_memo_writer import JudicialMemoWriter
 from backend.agents.quote_checker import QuoteChecker
 from backend.llm.client import LLMClient
 from backend.models import (
@@ -61,6 +63,8 @@ class Orchestrator:
         self._cross_doc = CrossDocConsistencyChecker(llm)
         self._quote_checker = QuoteChecker(llm, sources)
         self._authority_checker = AuthoritySupportChecker(llm, sources)
+        self._confidence_scorer = ConfidenceScorer(llm)
+        self._memo_writer = JudicialMemoWriter(llm)
         self._sources = sources
 
     async def run(
@@ -98,6 +102,15 @@ class Orchestrator:
         )
         findings.extend(authority_findings)
 
+        # Phase 3 (spec 003): confidence scoring + judicial memo.
+        # Both consume the assembled findings; they run sequentially because
+        # the memo prefers confidence-rescored findings for its ranking.
+        confidence_result = await self._confidence_scorer.run(findings)
+        if confidence_result.outcome == "success":
+            findings = confidence_result.data
+
+        memo_result = await self._memo_writer.run(case_name, findings)
+
         return VerificationReport(
             case_name=case_name,
             generated_at=datetime.now(UTC),
@@ -108,7 +121,10 @@ class Orchestrator:
                 cross_doc_result,
                 quote_result,
                 authority_result,
+                confidence_result,
+                memo_result,
             ],
+            judicial_memo=memo_result.data if memo_result.outcome != "failure" else None,
         )
 
     # ── Internals ─────────────────────────────────────────────────────────

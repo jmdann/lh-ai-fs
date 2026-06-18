@@ -17,6 +17,7 @@ from backend.models import (
     Citation,
     CitationsResult,
     Claim,
+    ConfidenceResult,
     DiscrepanciesResult,
     Document,
     DocumentKind,
@@ -24,6 +25,7 @@ from backend.models import (
     FactDiscrepancy,
     Finding,
     FindingKind,
+    MemoResult,
     Quote,
     QuoteCheck,
     QuoteCheckResult,
@@ -238,19 +240,45 @@ class TestFinding:
             prompt_version="1.0.0",
         )
 
-    def test_no_confidence_field_in_spec_001_ir(self) -> None:
-        """Spec 003 will add ``confidence`` + ``confidence_reasoning``.
-        Spec 001 ships without them so the commit narrative matches the spec."""
-        with pytest.raises(ValidationError):
+    def test_confidence_requires_reasoning(self) -> None:
+        """Spec 003: setting confidence without reasoning is rejected."""
+        with pytest.raises(ValidationError, match="confidence_reasoning"):
             Finding(
                 id="find-1",
                 kind=FindingKind.FACT_DISCREPANCY,
                 summary="x",
                 evidence=[EvidenceRef(span=_span(), role="primary")],
-                agent="X",
+                agent="ConfidenceScorer",
                 prompt_version="1.0.0",
-                confidence=0.8,  # type: ignore[call-arg]
+                confidence=0.8,
             )
+
+    def test_confidence_with_reasoning_accepted(self) -> None:
+        f = Finding(
+            id="find-1",
+            kind=FindingKind.FACT_DISCREPANCY,
+            summary="x",
+            evidence=[EvidenceRef(span=_span(), role="primary")],
+            agent="ConfidenceScorer",
+            prompt_version="1.0.0",
+            confidence=0.85,
+            confidence_reasoning="Three independent sources contradict the motion.",
+        )
+        assert f.confidence == 0.85
+
+    def test_confidence_out_of_bounds_rejected(self) -> None:
+        for bad in (-0.01, 1.01):
+            with pytest.raises(ValidationError):
+                Finding(
+                    id="find-1",
+                    kind=FindingKind.FACT_DISCREPANCY,
+                    summary="x",
+                    evidence=[EvidenceRef(span=_span(), role="primary")],
+                    agent="X",
+                    prompt_version="1.0.0",
+                    confidence=bad,
+                    confidence_reasoning="x",
+                )
 
     def test_prompt_version_pattern(self) -> None:
         with pytest.raises(ValidationError):
@@ -301,6 +329,7 @@ class TestAgentResultUnion:
             ("discrepancies", DiscrepanciesResult),
             ("quote_check", QuoteCheckResult),
             ("authority_check", AuthorityCheckResult),
+            ("confidence", ConfidenceResult),
         ],
     )
     def test_discriminator_picks_right_subtype_python(self, kind: str, klass: type) -> None:
@@ -314,6 +343,7 @@ class TestAgentResultUnion:
             ("discrepancies", DiscrepanciesResult),
             ("quote_check", QuoteCheckResult),
             ("authority_check", AuthorityCheckResult),
+            ("confidence", ConfidenceResult),
         ],
     )
     def test_discriminator_picks_right_subtype_json(self, kind: str, klass: type) -> None:
@@ -446,12 +476,26 @@ class TestVerificationReportRoundTrip:
         assert report.findings == []
         assert report.agent_results == []
 
-    def test_no_judicial_memo_field_in_spec_001(self) -> None:
-        """``judicial_memo`` is a spec 003 addition — must not be accepted in
-        spec 001 to keep the commit/spec narrative honest."""
-        with pytest.raises(ValidationError):
-            VerificationReport(
-                case_name="X v. Y",
-                generated_at=datetime(2026, 6, 18, tzinfo=UTC),
-                judicial_memo="nope",  # type: ignore[call-arg]
-            )
+    def test_judicial_memo_optional(self) -> None:
+        """Spec 003 activated ``judicial_memo``. It stays optional so reports
+        without the memo agent still validate."""
+        with_memo = VerificationReport(
+            case_name="X v. Y",
+            generated_at=datetime(2026, 6, 18, tzinfo=UTC),
+            judicial_memo="One-paragraph memo for the judge.",
+        )
+        assert with_memo.judicial_memo == "One-paragraph memo for the judge."
+
+    def test_memo_result_subtype(self) -> None:
+        """``MemoResult`` discriminates by kind=memo with data: str | None."""
+        payload = {
+            "agent": "JudicialMemoWriter",
+            "prompt_version": "1.0.0",
+            "outcome": "success",
+            "latency_ms": 412,
+            "kind": "memo",
+            "data": "The motion misrepresents Privette.",
+        }
+        result = _AGENT_RESULT_ADAPTER.validate_python(payload)
+        assert isinstance(result, MemoResult)
+        assert result.data == "The motion misrepresents Privette."
