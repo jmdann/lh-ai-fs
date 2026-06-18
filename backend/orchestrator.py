@@ -29,10 +29,13 @@ import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
+from backend.agents.authority_support_checker import AuthoritySupportChecker
 from backend.agents.citation_extractor import CitationExtractor
 from backend.agents.cross_doc_checker import CrossDocConsistencyChecker
+from backend.agents.quote_checker import QuoteChecker
 from backend.llm.client import LLMClient
 from backend.models import (
+    AuthorityCheckResult,
     Citation,
     CitationsResult,
     DiscrepanciesResult,
@@ -42,6 +45,7 @@ from backend.models import (
     FactDiscrepancy,
     Finding,
     FindingKind,
+    QuoteCheckResult,
     Span,
     VerificationReport,
 )
@@ -55,6 +59,8 @@ class Orchestrator:
     def __init__(self, llm: LLMClient, sources: SourceRegistry) -> None:
         self._extractor = CitationExtractor(llm)
         self._cross_doc = CrossDocConsistencyChecker(llm)
+        self._quote_checker = QuoteChecker(llm, sources)
+        self._authority_checker = AuthoritySupportChecker(llm, sources)
         self._sources = sources
 
     async def run(
@@ -70,20 +76,39 @@ class Orchestrator:
         for doc in documents.values():
             self._sources.register(doc)
 
+        # Phase 1: extract + cross-doc (independent; fan out).
         citations_result, cross_doc_result = await asyncio.gather(
             self._extractor.run(motion),
             self._cross_doc.run(motion, records),
         )
-
         citations, citations_result = self._ground_citations(citations_result)
+
+        # Phase 2: per-citation checks (also independent; fan out).
+        quote_result, authority_result = await asyncio.gather(
+            self._quote_checker.run(citations),
+            self._authority_checker.run(citations),
+        )
+
         findings, cross_doc_result = self._build_and_ground_findings(cross_doc_result)
+        # Append quote / authority findings (kinds activated for spec 002).
+        quote_findings, quote_result = self._build_quote_findings(quote_result, len(findings))
+        findings.extend(quote_findings)
+        authority_findings, authority_result = self._build_authority_findings(
+            authority_result, len(findings)
+        )
+        findings.extend(authority_findings)
 
         return VerificationReport(
             case_name=case_name,
             generated_at=datetime.now(UTC),
             citations=citations,
             findings=findings,
-            agent_results=[citations_result, cross_doc_result],
+            agent_results=[
+                citations_result,
+                cross_doc_result,
+                quote_result,
+                authority_result,
+            ],
         )
 
     # ── Internals ─────────────────────────────────────────────────────────
@@ -165,3 +190,70 @@ class Orchestrator:
     def _all_grounded(self, discrepancy: FactDiscrepancy) -> bool:
         spans = [discrepancy.motion_claim, *discrepancy.contradicting_evidence]
         return all(self._is_grounded(span) for span in spans)
+
+    # ── Spec 002: quote + authority findings ──────────────────────────────
+
+    def _build_quote_findings(
+        self, result: QuoteCheckResult, finding_offset: int
+    ) -> tuple[list[Finding], QuoteCheckResult]:
+        """Materialize ``QuoteCheck`` entries with verdict ∈ {altered, fabricated}
+        as ``Finding`` rows. ``exact``/``paraphrase``/``unverifiable`` stay in
+        ``agent_results.data`` but do NOT become findings — they're not
+        actionable for a reviewer triaging dishonesty."""
+        if result.outcome == "failure":
+            return [], result
+        actionable = {"altered", "fabricated"}
+        findings: list[Finding] = []
+        for check in result.data:
+            if check.verdict not in actionable:
+                continue
+            kind = (
+                FindingKind.QUOTE_ALTERED
+                if check.verdict == "altered"
+                else FindingKind.QUOTE_FABRICATED
+            )
+            evidence: list[EvidenceRef] = []
+            if check.matched_span is not None and self._is_grounded(check.matched_span):
+                evidence.append(EvidenceRef(span=check.matched_span, role="primary"))
+            if not evidence:
+                continue  # cannot ship a finding without grounded evidence
+            findings.append(
+                Finding(
+                    id=f"find-{finding_offset + len(findings) + 1}",
+                    kind=kind,
+                    summary=check.reasoning,
+                    evidence=evidence,
+                    agent=result.agent,
+                    prompt_version=result.prompt_version,
+                    citation_id=check.citation_id,
+                )
+            )
+        return findings, result
+
+    def _build_authority_findings(
+        self, result: AuthorityCheckResult, finding_offset: int
+    ) -> tuple[list[Finding], AuthorityCheckResult]:
+        """Materialize ``contradicts`` verdicts as Findings. ``supports`` and
+        ``unverifiable`` stay in ``agent_results.data`` only — supports is
+        the expected-good case; unverifiable is informational, not an
+        actionable dishonesty signal."""
+        if result.outcome == "failure":
+            return [], result
+        findings: list[Finding] = []
+        for check in result.data:
+            if check.verdict != "contradicts":
+                continue
+            if check.source_basis is None or not self._is_grounded(check.source_basis):
+                continue
+            findings.append(
+                Finding(
+                    id=f"find-{finding_offset + len(findings) + 1}",
+                    kind=FindingKind.AUTHORITY_UNSUPPORTED,
+                    summary=check.reasoning,
+                    evidence=[EvidenceRef(span=check.source_basis, role="primary")],
+                    agent=result.agent,
+                    prompt_version=result.prompt_version,
+                    citation_id=check.citation_id,
+                )
+            )
+        return findings, result

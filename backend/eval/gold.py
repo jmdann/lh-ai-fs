@@ -15,7 +15,13 @@ from typing import Any, Literal
 
 import yaml
 
-from backend.models import Citation, Finding, FindingKind
+from backend.models import (
+    AuthorityCheck,
+    Citation,
+    Finding,
+    FindingKind,
+    QuoteCheck,
+)
 from backend.sources import _normalize
 
 GoldDiscrepancyKind = Literal["minor", "material", "dispositive"]
@@ -38,13 +44,33 @@ class GoldCitation:
 
 
 @dataclass(frozen=True)
+class GoldQuote:
+    id: str
+    cited_authority_contains: str
+    expected_verdict: str  # one of QuoteVerdict
+    notes: str
+
+
+@dataclass(frozen=True)
+class GoldAuthority:
+    id: str
+    cited_authority_contains: str
+    expected_verdict: str  # one of AuthorityVerdict
+    notes: str
+
+
+@dataclass(frozen=True)
 class GoldSet:
     discrepancies: tuple[GoldDiscrepancy, ...]
     citations: tuple[GoldCitation, ...]
+    quotes: tuple[GoldQuote, ...] = ()
+    authorities: tuple[GoldAuthority, ...] = ()
 
     @property
     def total(self) -> int:
-        return len(self.discrepancies) + len(self.citations)
+        return (
+            len(self.discrepancies) + len(self.citations) + len(self.quotes) + len(self.authorities)
+        )
 
 
 def load_gold_set(path: Path) -> GoldSet:
@@ -67,7 +93,30 @@ def load_gold_set(path: Path) -> GoldSet:
         )
         for item in raw.get("citations", [])
     )
-    return GoldSet(discrepancies=discrepancies, citations=citations)
+    quotes = tuple(
+        GoldQuote(
+            id=item["id"],
+            cited_authority_contains=item["cited_authority_contains"],
+            expected_verdict=item["expected_verdict"],
+            notes=item.get("notes", ""),
+        )
+        for item in raw.get("quotes", [])
+    )
+    authorities = tuple(
+        GoldAuthority(
+            id=item["id"],
+            cited_authority_contains=item["cited_authority_contains"],
+            expected_verdict=item["expected_verdict"],
+            notes=item.get("notes", ""),
+        )
+        for item in raw.get("authorities", [])
+    )
+    return GoldSet(
+        discrepancies=discrepancies,
+        citations=citations,
+        quotes=quotes,
+        authorities=authorities,
+    )
 
 
 # ── Matching ───────────────────────────────────────────────────────────────
@@ -103,3 +152,22 @@ def matches_discrepancy(gold: GoldDiscrepancy, finding: Finding) -> bool:
 def matches_citation(gold: GoldCitation, citation: Citation) -> bool:
     needle = _normalize(gold.cited_authority_contains)
     return needle in _normalize(citation.cited_authority)
+
+
+def matches_quote(gold: GoldQuote, check: QuoteCheck, citation_lookup: dict[str, str]) -> bool:
+    """``citation_lookup`` maps citation_id → cited_authority (raw). Quote
+    matches if the underlying citation mentions the gold's authority AND
+    the verdict equals the expected verdict."""
+    cited = citation_lookup.get(check.citation_id, "")
+    if _normalize(gold.cited_authority_contains) not in _normalize(cited):
+        return False
+    return check.verdict == gold.expected_verdict
+
+
+def matches_authority(
+    gold: GoldAuthority, check: AuthorityCheck, citation_lookup: dict[str, str]
+) -> bool:
+    cited = citation_lookup.get(check.citation_id, "")
+    if _normalize(gold.cited_authority_contains) not in _normalize(cited):
+        return False
+    return check.verdict == gold.expected_verdict

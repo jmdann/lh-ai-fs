@@ -113,9 +113,9 @@ class TestAnalyzeRoute:
         assert isinstance(payload["citations"], list)
         assert isinstance(payload["findings"], list)
         assert isinstance(payload["agent_results"], list)
-        # Both agent_results present (CitationsResult + DiscrepanciesResult).
+        # All four agent_results present.
         kinds = {r["kind"] for r in payload["agent_results"]}
-        assert kinds == {"citations", "discrepancies"}
+        assert kinds == {"citations", "discrepancies", "quote_check", "authority_check"}
 
     def test_agent_results_include_latency(self, client: TestClient) -> None:
         response = client.post("/analyze")

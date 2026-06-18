@@ -147,9 +147,9 @@ class TestHappyPath:
         assert len(report.findings[0].evidence) == 2
         assert report.findings[0].evidence[0].role == "primary"
         assert report.findings[0].evidence[1].role == "contradicting"
-        assert len(report.agent_results) == 2
+        assert len(report.agent_results) == 4
         kinds = {r.kind for r in report.agent_results}
-        assert kinds == {"citations", "discrepancies"}
+        assert kinds == {"citations", "discrepancies", "quote_check", "authority_check"}
         for ar in report.agent_results:
             assert ar.outcome == "success"
 
@@ -366,15 +366,19 @@ class TestFailurePropagation:
         )
         assert cross_doc_result.outcome == "failure"
 
-    async def test_both_agents_fail_still_returns_report(self) -> None:
-        # Neither agent seeded.
+    async def test_both_phase1_agents_fail_still_returns_report(self) -> None:
+        # Neither extractor nor cross-doc seeded. Quote + authority checkers
+        # run anyway with the empty citation list — they succeed trivially.
         fake = FakeLLMClient()
         orch = Orchestrator(fake, SourceRegistry())
         report = await orch.run(_all_docs())
         assert report.citations == []
         assert report.findings == []
-        outcomes = {r.outcome for r in report.agent_results}
-        assert outcomes == {"failure"}
+        outcomes_by_kind = {r.kind: r.outcome for r in report.agent_results}
+        assert outcomes_by_kind["citations"] == "failure"
+        assert outcomes_by_kind["discrepancies"] == "failure"
+        assert outcomes_by_kind["quote_check"] == "success"  # empty input → success
+        assert outcomes_by_kind["authority_check"] == "success"
 
 
 # ── Input validation ──────────────────────────────────────────────────────
