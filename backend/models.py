@@ -197,9 +197,10 @@ class Finding(BaseModel):
     excluded from eval matching to prevent prompt phrasing from leaking
     into the score (STANDARDS § 5).
 
-    Confidence + reasoning are added in spec 003; they are intentionally
-    absent from this PR's IR (no field populated by spec 001 / 002 agents
-    means no field on the model).
+    Confidence + confidence_reasoning are populated by spec 003's
+    ``ConfidenceScorer``. Findings emitted by spec 001 / 002 agents leave
+    both as None until the scorer runs. The validator enforces that
+    setting confidence requires explaining it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -212,6 +213,14 @@ class Finding(BaseModel):
     prompt_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     citation_id: str | None = Field(default=None, pattern=r"^cite-\d+$")
     claim_id: str | None = Field(default=None, pattern=r"^claim-\d+$")
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence_reasoning: str | None = None
+
+    @model_validator(mode="after")
+    def _confidence_reasoning_required(self) -> Finding:
+        if self.confidence is not None and not self.confidence_reasoning:
+            raise ValueError("confidence_reasoning is required when confidence is set")
+        return self
 
 
 # ── Agent results: discriminated union, one class per kind ─────────────────
@@ -250,8 +259,30 @@ class AuthorityCheckResult(_AgentResultBase):
     data: list[AuthorityCheck] = Field(default_factory=list)
 
 
+class ConfidenceResult(_AgentResultBase):
+    """Spec 003: ``ConfidenceScorer`` rescored each Finding. ``data`` is the
+    list of Findings with ``confidence`` + ``confidence_reasoning`` populated;
+    the orchestrator merges these back into the report's findings list."""
+
+    kind: Literal["confidence"] = "confidence"
+    data: list[Finding] = Field(default_factory=list)
+
+
+class MemoResult(_AgentResultBase):
+    """Spec 003: ``JudicialMemoWriter`` synthesized the top findings into a
+    one-paragraph memo. ``data`` is the memo string or None on failure."""
+
+    kind: Literal["memo"] = "memo"
+    data: str | None = None
+
+
 AgentResult = Annotated[
-    CitationsResult | DiscrepanciesResult | QuoteCheckResult | AuthorityCheckResult,
+    CitationsResult
+    | DiscrepanciesResult
+    | QuoteCheckResult
+    | AuthorityCheckResult
+    | ConfidenceResult
+    | MemoResult,
     Field(discriminator="kind"),
 ]
 
@@ -276,3 +307,4 @@ class VerificationReport(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     agent_results: list[AgentResult] = Field(default_factory=list)
+    judicial_memo: str | None = None
