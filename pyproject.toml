@@ -1,0 +1,65 @@
+[project]
+name = "bs-detector"
+version = "0.1.0"
+description = "Multi-agent pipeline that verifies legal briefs against supporting documents."
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["frontend", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "UP",   # pyupgrade
+  "SIM",  # flake8-simplify
+  "ASYNC",
+  "RUF",
+]
+ignore = [
+  "E501",  # line length handled by formatter
+  "B008",  # FastAPI relies on Depends(...) in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/**" = ["B011", "SIM117"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+files = ["backend"]
+exclude = ["backend/tests/fixtures", "frontend"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["rapidfuzz.*", "pytest_socket.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers --disable-socket --allow-unix-socket"
+markers = [
+  "integration: tests that exercise multiple modules together",
+  "enable_socket: opt-in network access for the rare end-to-end case",
+]
