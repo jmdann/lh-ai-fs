@@ -531,9 +531,29 @@ Run via `/codex` with the full spec + STANDARDS as input. Six findings, all mate
 | 5 | **Accept** | § 7.4 gates on counts (`--min-matched-gold 3 --max-grounding-failures 0 --max-cited-doc-scope-failures 0`). Percentages reported in markdown for trend. |
 | 6 | **Accept — owned** | The offset-emitting LLM was the embarrassing thing. Whole IR rewrite + grounding-metric rename address it. STANDARDS now codifies "LLMs emit quotes, never offsets" (§ 3.6). |
 
-### 14.3 Codex review — post-implementation
+### 14.3 Codex review — incremental (post-PR-open)
 
-To be run via `/codex review` once the PR is open. Findings + responses appended here.
+Per RELEASE § 8, `/codex review` runs on the open PR as commits land, not only at the end. Findings logged here with the commit that addressed them.
+
+#### Round A — after commit `chore(deps)` (`05a90a3`)
+
+Three findings, all accepted. Fixed in commit `fix(deps)` (`4c4eea1`).
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | P1 | `openai >= 1.30` lower bound predates `client.responses` / `client.beta.chat.completions.parse`; a clean install can satisfy the pin and then fail at the first structured-outputs call. Codex verified against openai-python v1.30.0 API reference. | Raised floor to `>= 1.50`. |
+| 2 | P2 | `mypy.overrides.module = ["rapidfuzz.*", "pytest_socket.*"]` covers submodules only; top-level `from rapidfuzz import fuzz` still trips `--strict`. | Added bare module names alongside wildcards. |
+| 3 | P2 | `--allow-unix-socket` in pytest addopts isn't needed for FastAPI `TestClient` (httpx-based, in-process). Broader than the stated policy. | Removed; `--disable-socket` alone enforces no-network policy. |
+
+Commit-message review: clean.
+
+#### Round B — after implementation commits
+
+To be appended once `feat(models)` through `docs` commits land.
+
+### 14.4 Codex review — final pre-merge
+
+Run before flipping the PR from Draft to Ready-for-review. Same protocol as 14.3; the verbatim output gets pasted here in full.
 
 ## 15. Test plan
 
