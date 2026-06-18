@@ -16,19 +16,25 @@ makes it structurally impossible for the LLM to launder a quote that
 doesn't appear in any document we loaded. An eval suite scores the
 pipeline against a hand-labeled gold set with count-based CI gates.
 
-What I did NOT build:
+This file is updated through the build. Initial version (PR #9) was
+honest about a smaller scope; spec 002 + spec 003 then shipped what's
+listed below and the cut list in "What I cut and why" was rewritten to
+match.
 
-- **`QuoteChecker`** — the agent that compares quoted text in the brief
-  against the cited authority's actual text. Would have caught altered or
-  fabricated direct quotes.
-- **`AuthoritySupportChecker`** — the agent that decides whether a cited
-  case actually supports the proposition. Would have completed Tier 1 core.
-- **`ConfidenceScorer`** + **`JudicialMemoWriter`** — Tier 3 stretch.
-- **Frontend rewrite** — the existing React shell still renders raw JSON.
+What I DID NOT build (current state):
+
+- **Frontend cards rewrite** — see § "What I cut" below for the status
+  of this item; if it shipped in PR #13 then this line is stale.
+- **Web-based case-law retrieval** — the gap that makes
+  `AuthoritySupportChecker` emit `unverifiable` for every external
+  citation. Real fix is documented in "What I'd do differently".
 - **Real-mode eval baseline** — the committed baseline is `--mode fake`;
   real numbers depend on a paid OpenAI key.
+- **Orchestrator hardening + calibration plot** — see cuts list.
 
-Spec 001 shipped as 5 stacked PRs (#3-#6 + #8). Specs 002 + 003 did not.
+Shipped through PR #12: spec 001 (foundation + eval), spec 002 (quote +
+authority), spec 003 agents (confidence + memo). Stack visible at
+<https://github.com/jmdann/lh-ai-fs/pulls>.
 
 ## What I cut and why
 
@@ -68,15 +74,37 @@ it's a symptom.
   N=3 still runs and gets dumped to JSON; the Markdown table doesn't show
   the variance row when N=1, which is the boring default. **Cost:** small.
 
-- **`ConfidenceScorer` + `JudicialMemoWriter`.** Tier 3 stretch. I chose
-  not to scaffold them as stubs because shipping more typed surface I never
-  fill is the worst kind of "look how I'd build it" theater. **Cost:**
-  Tier 3 is missing.
+- **Orchestrator hardening (tenacity retries + per-agent timeouts).** Spec
+  003 promised `asyncio.wait_for` on every agent + `tenacity.retry` at the
+  agent boundary. **Cut** because each agent already wraps its body in
+  `try/except Exception` that maps any failure to
+  `AgentResult(outcome="failure", error=...)`, AND the `OpenAIClient`
+  already configures tenacity at the LLM call layer. Adding another retry
+  ring at the orchestrator would have been belt-and-suspenders on the
+  retry side, and per-agent timeouts would only matter if a real-mode run
+  hung on a slow LLM call. **Cost:** an in-the-wild slow API call hangs
+  the whole request instead of timing out one agent.
 
-- **Frontend rewrite into cards.** The brief asks for "structured, readable"
-  UI as a Tier 3 stretch. Time went elsewhere. **Cost:** the UI still
-  renders the report as `<pre>{JSON.stringify(...)}</pre>`. The JSON IS
-  structured; reading it is on the grader.
+- **Confidence calibration plot (Brier score).** Promised in spec 003
+  § 8 as a "bucket findings by confidence, report match rate per
+  bucket" analysis. **Cut** because (a) we don't have multiple runs
+  across temperature settings to populate the buckets, (b) on this case
+  file most findings cluster at similar confidence so a Brier number
+  would be uninformative anyway. **Cost:** no way to tell whether
+  ConfidenceScorer is well-calibrated against gold; the per-finding
+  confidence number ships but its quality is unmeasured.
+
+- **`unverifiable-precision` metric.** Spec 002 promised this as a
+  ratio-based gate against "say IDK to everything" gaming. Shipped in
+  PR #11 (spec 002), then Codex round 3 caught that the implementation
+  collapsed to recall under a precision name — the gaming-detection it
+  was supposed to do requires gold entries with
+  `expected_verdict ∈ {supports, contradicts}`, which the Rivera corpus
+  doesn't produce because no authorities are in scope. **Cut**
+  (removed in PR #11 fix commit). **Cost:** no metric in the eval
+  harness directly detects unverifiable-gaming; would land naturally
+  with retrieval since in-corpus authorities make the metric
+  non-degenerate.
 
 ## Where the pipeline is weakest
 

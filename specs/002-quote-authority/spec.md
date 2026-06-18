@@ -191,15 +191,17 @@ This PR's CI gate (count-based per STANDARDS § 5, matching spec 001's pattern):
 
 ```
 python run_evals.py \
-  --min-matched-gold 7 \
+  --min-matched-gold-findings 3 \
+  --min-matched-gold-citations 3 \
+  --min-matched-gold-quotes 2 \
+  --min-matched-gold-authorities 2 \
   --max-grounding-failures 0 \
-  --max-cited-doc-scope-failures 0 \
-  --min-unverifiable-precision 0.80
+  --max-scope-failures 0
 ```
 
-Counts rise from 3 → 7 because the gold set roughly doubles. `unverifiable-precision` stays as a ratio because it's about *which* unverifiable findings are right, not how many — the gaming failure mode here is "say unverifiable to everything", and the count-gate doesn't catch that.
+Counts rise as the gold set roughly doubles (4 disc + 5 cite + 2 quote + 3 auth = 14 entries).
 
-**New metric — `unverifiable-precision`**: of findings where the pipeline emitted `unverifiable`, the fraction that the gold also marks unverifiable. Below 0.80 means the pipeline is hiding behind "I don't know" to dodge the hallucination metric.
+**Originally planned — `unverifiable-precision` metric was cut during Codex round 3 review (see PR #11 fix commit).** The original formula (`matched_gold_authorities / total_gold_authorities`) collapsed to recall under a precision name, and the gaming failure mode it was supposed to catch ("say IDK to everything") requires gold entries with `expected_verdict ∈ {supports, contradicts}`, which the Rivera corpus does not produce (no in-corpus authorities). Real precision returns once retrieval lands in a future PR — until then, shipping the recall-shaped metric under a precision label was dishonest, so it was removed.
 
 ## 9. Repository layout after this PR
 
@@ -236,7 +238,7 @@ No new standards; this PR is the first one that fully exercises STANDARDS § 3.3
 |---|---|
 | **1. Agent decomposition** | Two more agents with crisp seams; `QuoteChecker` ≠ `AuthoritySupportChecker` ≠ `CrossDocChecker` enforced by code AND by the prompts. Code-as-judge for substring fidelity demonstrates we know when LLMs are wrong tool. |
 | **2. Prompt precision** | Prompts are minimal — `QuoteChecker`'s LLM call only sees two strings and emits 2-value verdict; `AuthoritySupportChecker` is forbidden from running when source is absent. Smaller prompts = smaller hallucination surface. |
-| **3. Eval quality** | New `unverifiable-precision` metric catches the "say IDK to everything" failure mode. Gold set now covers all four agents. Threshold-bump documents progress. |
+| **3. Eval quality** | Gold set now covers all four agents (4 disc + 5 cite + 2 quote + 3 auth). Count gates per agent. The `unverifiable-precision` metric was attempted, found degenerate against this corpus, and honestly removed (PR #11). |
 | **4. How far we get** | This PR is the bulk of the actual quality work. Submitted alone (without 003), still a strong Tier 1+2 result with all four core agents + measured uncertainty. |
 | **5. Reflection honesty** | `unverifiable` as first-class is itself the most defensible design choice in the project. REFLECTION.md in 003 will lean on this. |
 
@@ -248,7 +250,7 @@ To be run: `/codex` with this spec.md as input, focusing on:
 - Is the deterministic-first quote pipeline actually safer, or does it introduce its own failure mode (normalization bugs hiding real alterations)?
 - Is `AuthoritySupportChecker` skipping the LLM entirely on out-of-corpus citations the right call, or should it at least try semantic matching against a vetted citation list?
 - Are the new gold entries adversarial enough, or am I testing the prompts I already wrote?
-- Is `unverifiable-precision` a meaningful metric or a gamable one?
+- Is `unverifiable-precision` a meaningful metric or a gamable one? *(Answered after spec written: degenerate without in-corpus authorities. Removed in PR #11 fix.)*
 
 Findings + decisions appended here before implementation starts.
 
@@ -270,7 +272,7 @@ Findings + decisions appended here before implementation starts.
 - [ ] `pytest -q` passes; zero network in unit tests.
 - [ ] `mypy --strict backend/` clean.
 - [ ] `ruff check . && ruff format --check .` clean.
-- [ ] `python run_evals.py` meets recall ≥ 0.65, hallucination ≤ 0.10, unverifiable-precision ≥ 0.80.
+- [x] `python run_evals.py` meets the count gates in § 8 (matched_gold_findings ≥ 3, matched_gold_citations ≥ 3, matched_gold_quotes ≥ 2, matched_gold_authorities ≥ 2, grounding_failures == 0, scope_failures == 0). Baseline at `evals/baseline_report.md`.
 - [ ] `evals/baseline_report.md` refreshed; commit shows the delta vs 001.
 - [ ] `PROGRESS.md` updated.
 - [ ] PR body links spec, quotes deltas from 001's baseline, notes any gold entries that the pipeline misses (honesty).
