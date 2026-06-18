@@ -1,0 +1,26 @@
+{
+  "runs": [
+    {
+      "matched_gold_findings": 4,
+      "matched_gold_citations": 5,
+      "grounding_integrity_failures": 0,
+      "cited_doc_in_scope_failures": 0,
+      "total_emitted_findings": 4,
+      "total_emitted_citations": 5,
+      "discrepancy_matches": {
+        "gold-disc-1": true,
+        "gold-disc-2": true,
+        "gold-disc-3": true,
+        "gold-disc-4": true
+      },
+      "citation_matches": {
+        "gold-cite-1": true,
+        "gold-cite-2": true,
+        "gold-cite-3": true,
+        "gold-cite-4": true,
+        "gold-cite-5": true
+      },
+      "overall_recall": 1.0
+    }
+  ]
+}
