@@ -8,20 +8,40 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import Settings, get_settings
-from backend.documents_io import load_case_documents
 from backend.llm.client import LLMClient, OpenAIClient
-from backend.models import Document, VerificationReport
+from backend.models import Document, DocumentKind, VerificationReport
 from backend.observability import configure_logging
 from backend.orchestrator import Orchestrator
 from backend.sources import SourceRegistry
 
 CASE_NAME = "Rivera v. Harmon Construction Group"
+
+_DOCS_DIR = Path(__file__).parent / "documents"
+_DOC_FILES: dict[str, tuple[str, DocumentKind]] = {
+    "motion_for_summary_judgment": ("motion", DocumentKind.MOTION),
+    "police_report": ("police_report", DocumentKind.POLICE_REPORT),
+    "medical_records_excerpt": ("medical_records_excerpt", DocumentKind.MEDICAL_RECORDS),
+    "witness_statement": ("witness_statement", DocumentKind.WITNESS_STATEMENT),
+}
+
+
+def load_case_documents() -> dict[str, Document]:
+    """Read the four case-file .txt documents into typed ``Document`` objects.
+    Missing files raise ``FileNotFoundError`` so deploys fail fast."""
+    out: dict[str, Document] = {}
+    for stem, (doc_id, kind) in _DOC_FILES.items():
+        path = _DOCS_DIR / f"{stem}.txt"
+        if not path.exists():
+            raise FileNotFoundError(f"Expected case-file document not found: {path}")
+        out[doc_id] = Document(id=doc_id, kind=kind, text=path.read_text())
+    return out
 
 
 @asynccontextmanager
@@ -45,11 +65,7 @@ app.add_middleware(
 # ── Dependencies (every Depends() in this module lives here) ──────────────
 
 
-def get_llm_client(
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> LLMClient:
-    """LLM client factory. ``Settings`` is cached so the same OpenAI client
-    is reused across requests within a process."""
+def get_llm_client(settings: Annotated[Settings, Depends(get_settings)]) -> LLMClient:
     return OpenAIClient(settings)
 
 

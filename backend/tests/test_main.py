@@ -29,9 +29,8 @@ from backend.agents.prompts.cross_doc_checker import SYSTEM as CROSS_DOC_SYSTEM
 from backend.agents.prompts.cross_doc_checker import (
     build_user_prompt as build_cross_doc_prompt,
 )
-from backend.documents_io import load_case_documents
 from backend.llm.client import FakeLLMClient, LLMClient
-from backend.main import app, get_llm_client
+from backend.main import app, get_llm_client, load_case_documents
 from backend.models import Document, Span
 
 
