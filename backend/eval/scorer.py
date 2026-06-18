@@ -45,7 +45,6 @@ class EvalScores:
     total_emitted_citations: int
     total_emitted_quote_checks: int
     total_emitted_authority_checks: int
-    emitted_authority_unverifiable: int
 
     # Per-gold-entry matches (for the human-readable diff)
     discrepancy_matches: dict[str, bool]
@@ -64,24 +63,6 @@ class EvalScores:
         if self.total_gold_citations == 0:
             return 1.0
         return self.matched_gold_citations / self.total_gold_citations
-
-    @property
-    def unverifiable_precision(self) -> float:
-        """Of GOLD-LABELED authority checks the pipeline marked unverifiable,
-        the fraction that gold ALSO marks unverifiable.
-
-        Denominator is restricted to gold-labeled cites so the metric does
-        not punish a pipeline for emitting unverifiable on cites gold hasn't
-        labeled (e.g. footnote authorities the gold set deliberately doesn't
-        enumerate). Gaming this still requires the pipeline to say
-        unverifiable for cases gold actually marks supports/contradicts —
-        once spec 002+ has in-corpus authorities, that's the live test."""
-        if self.total_gold_authorities == 0:
-            return 1.0
-        # All gold entries today expect unverifiable, so this collapses to
-        # matched_gold_authorities / total_gold_authorities. The structure
-        # is here for when gold gains supports/contradicts entries.
-        return self.matched_gold_authorities / self.total_gold_authorities
 
     @property
     def overall_recall(self) -> float:
@@ -161,8 +142,6 @@ def score(report: VerificationReport, gold: GoldSet, sources: SourceRegistry) ->
             matches_authority(ga, a, citation_lookup) for a in authority_checks
         )
 
-    emitted_unverifiable = sum(1 for a in authority_checks if a.verdict == "unverifiable")
-
     grounding_fail, scope_fail = _grounding_failures(report.findings, report.citations, sources)
 
     return EvalScores(
@@ -180,7 +159,6 @@ def score(report: VerificationReport, gold: GoldSet, sources: SourceRegistry) ->
         total_emitted_citations=len(report.citations),
         total_emitted_quote_checks=len(quote_checks),
         total_emitted_authority_checks=len(authority_checks),
-        emitted_authority_unverifiable=emitted_unverifiable,
         discrepancy_matches=disc_matches,
         citation_matches=cite_matches,
         quote_matches=quote_matches,

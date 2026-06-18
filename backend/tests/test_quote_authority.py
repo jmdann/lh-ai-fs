@@ -112,21 +112,16 @@ class TestQuoteCheckerInCorpus:
 
     async def test_fuzzy_match_invokes_llm(self) -> None:
         # Quote = source minus one word — partial_ratio >= 0.9 → fuzzy path.
+        from backend.agents.quote_checker import _LLMVerdict
+
         fake = FakeLLMClient()
         sources = SourceRegistry([self._source_doc()])
-        # Pre-canned LLM response for the fuzzy decision.
-        # We don't know the exact prompt; pre-seed a generic fuzzy reply.
-        # The agent uses an inline pydantic model so we mirror that shape.
 
-        class _Verdict(BaseModel):
-            verdict: str
-            reasoning: str
-
-        # We monkey-patch the FakeLLMClient.complete to accept anything and
-        # return our canned verdict (the prompt is generated internally so
-        # exact-string matching the FakeLLMClient key would be brittle here).
+        # Monkey-patch FakeLLMClient.complete to return a canned verdict.
+        # We reuse the agent's own module-scope _LLMVerdict so this test
+        # would fail loudly if that schema drifts.
         async def _stub_complete(*, system: str, user: str, schema: type[BaseModel]) -> BaseModel:
-            return _Verdict(verdict="altered", reasoning="Material word dropped.")
+            return _LLMVerdict(verdict="altered", reasoning="Material word dropped.")
 
         fake.complete = _stub_complete  # type: ignore[method-assign, assignment]
         checker = QuoteChecker(fake, sources)

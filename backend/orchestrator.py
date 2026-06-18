@@ -199,11 +199,17 @@ class Orchestrator:
         """Materialize ``QuoteCheck`` entries with verdict ∈ {altered, fabricated}
         as ``Finding`` rows. ``exact``/``paraphrase``/``unverifiable`` stay in
         ``agent_results.data`` but do NOT become findings — they're not
-        actionable for a reviewer triaging dishonesty."""
+        actionable for a reviewer triaging dishonesty.
+
+        Parity with ``_build_and_ground_findings``: an ``altered`` verdict
+        whose ``matched_span`` does not ground is silently dropped EXCEPT
+        we flip ``outcome`` to ``partial`` with a count, so the eval harness
+        sees the drop rather than missing it (Codex round 3, spec 002)."""
         if result.outcome == "failure":
             return [], result
         actionable = {"altered", "fabricated"}
         findings: list[Finding] = []
+        dropped = 0
         for check in result.data:
             if check.verdict not in actionable:
                 continue
@@ -216,6 +222,7 @@ class Orchestrator:
             if check.matched_span is not None and self._is_grounded(check.matched_span):
                 evidence.append(EvidenceRef(span=check.matched_span, role="primary"))
             if not evidence:
+                dropped += 1
                 continue  # cannot ship a finding without grounded evidence
             findings.append(
                 Finding(
@@ -228,6 +235,13 @@ class Orchestrator:
                     citation_id=check.citation_id,
                 )
             )
+        if dropped > 0:
+            return findings, result.model_copy(
+                update={
+                    "outcome": "partial",
+                    "error": (f"{dropped} quote finding(s) dropped at the grounding boundary"),
+                }
+            )
         return findings, result
 
     def _build_authority_findings(
@@ -236,14 +250,20 @@ class Orchestrator:
         """Materialize ``contradicts`` verdicts as Findings. ``supports`` and
         ``unverifiable`` stay in ``agent_results.data`` only — supports is
         the expected-good case; unverifiable is informational, not an
-        actionable dishonesty signal."""
+        actionable dishonesty signal.
+
+        Parity with ``_build_and_ground_findings``: a ``contradicts`` whose
+        ``source_basis`` does not ground is dropped but the result flips to
+        ``partial`` so the eval harness sees the drop."""
         if result.outcome == "failure":
             return [], result
         findings: list[Finding] = []
+        dropped = 0
         for check in result.data:
             if check.verdict != "contradicts":
                 continue
             if check.source_basis is None or not self._is_grounded(check.source_basis):
+                dropped += 1
                 continue
             findings.append(
                 Finding(
@@ -255,5 +275,14 @@ class Orchestrator:
                     prompt_version=result.prompt_version,
                     citation_id=check.citation_id,
                 )
+            )
+        if dropped > 0:
+            return findings, result.model_copy(
+                update={
+                    "outcome": "partial",
+                    "error": (
+                        f"{dropped} contradicts finding(s) dropped at the grounding boundary"
+                    ),
+                }
             )
         return findings, result

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import time
 
+from pydantic import BaseModel
 from rapidfuzz import fuzz
 
 from backend.agents.prompts.quote_checker import (
@@ -33,6 +34,16 @@ from backend.agents.prompts.quote_checker import (
 from backend.llm.client import LLMClient
 from backend.models import Citation, QuoteCheck, QuoteCheckResult, Span
 from backend.sources import SourceRegistry, _normalize
+
+
+class _LLMVerdict(BaseModel):
+    """Module-scope Pydantic schema for the fuzzy-path LLM call. Hoisted out
+    of the method (Codex round 3 spec 002 review) so the schema isn't
+    rebuilt on every fuzzy citation — Pydantic class construction is not
+    free and we'd burn cycles for no reason."""
+
+    verdict: str
+    reasoning: str
 
 
 # Heuristics for mapping a free-form cited authority string to a registered
@@ -110,16 +121,10 @@ class QuoteChecker:
             # LLM decides paraphrase vs altered.
             source_doc = self._sources_text(doc_id)
             source_snippet = _best_fuzzy_window(quote, source_doc)
-            from pydantic import BaseModel
-
-            class _Verdict(BaseModel):
-                verdict: str
-                reasoning: str
-
             llm_out = await self._llm.complete(
                 system=SYSTEM,
                 user=build_user_prompt(quote, source_snippet),
-                schema=_Verdict,
+                schema=_LLMVerdict,
             )
             verdict = llm_out.verdict if llm_out.verdict in {"paraphrase", "altered"} else "altered"
             return QuoteCheck(
