@@ -15,7 +15,7 @@ Your task: build an AI pipeline that catches it.
 | `SourceRegistry` grounding boundary (STANDARDS § 3.6) | ✅ |
 | `QuoteChecker` + `AuthoritySupportChecker` | ⚪ spec 002 |
 | `ConfidenceScorer` + `JudicialMemoWriter` + UI rewrite | ⚪ spec 003 |
-| `REFLECTION.md` | ⚪ spec 003 |
+| `REFLECTION.md` | ✅ — at the repo root |
 
 **Tests:** 136 passing, no network.
 **Eval baseline (fake mode, N=3):** 4/4 discrepancies + 5/5 citations matched, 0 grounding failures. Committed at `evals/baseline_report.md`.
