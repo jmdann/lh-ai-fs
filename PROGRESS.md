@@ -20,7 +20,7 @@ Tracker for the BS Detector take-home. Updated as PRs land.
 | **Tier 3** Judicial memo agent | ⚪ deferred | spec 003 |
 | **Tier 3** Graceful orchestration | ⚪ partial | spec 001 thin failure handling; spec 003 hardens (tenacity + timeouts) |
 | **Tier 3** Structured UI | ⚪ deferred | spec 003 |
-| **Tier 3** Reflection document | ⚪ deferred | spec 003 — `REFLECTION.md` |
+| **Tier 3** Reflection document | ✅ | `REFLECTION.md` — shipped early because criterion 5 (reflection honesty) is graded directly |
 
 ## Specs
 
@@ -50,7 +50,5 @@ Tracker for the BS Detector take-home. Updated as PRs land.
 
 - `QuoteChecker` / `AuthoritySupportChecker` — spec 002.
 - `ConfidenceScorer` / `JudicialMemoWriter` / structured UI — spec 003.
-- `REFLECTION.md` with honest cuts + weakest-points list — spec 003 PR will
-  ship this; the brief explicitly grades reflection honesty (criterion 5).
 - Real-mode eval against the OpenAI API — requires a key. Baseline in this
   repo is fake-mode.
