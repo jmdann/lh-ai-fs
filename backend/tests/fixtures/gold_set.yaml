@@ -1,0 +1,101 @@
+# Gold set — hand-labeled known flaws in the Rivera MSJ case file.
+#
+# STANDARDS § 5: this file was authored by reading the four documents end-to-end,
+# BEFORE the prompts were tuned. Drift between agent behavior and gold gets fixed
+# by changing the agent, not the gold — that's the silent way to fake recall.
+#
+# Two layers of expectations:
+#   * `discrepancies` — facts the cross-doc agent should flag
+#   * `citations`     — authorities the CitationExtractor should catch
+#
+# `motion_quote` and `evidence_quote` are substrings that should appear (after
+# normalization) in the respective documents — they're what SourceRegistry would
+# match. They are NOT the exact strings the LLM has to emit; the eval matcher
+# uses `(kind, doc_id, span overlap)` on the grounded spans, not string equality
+# on the gold quotes.
+
+discrepancies:
+  - id: gold-disc-1
+    notes: |
+      Date of incident. The motion says March 14, three independent record
+      documents say March 12. The motion's argument D (statute of limitations
+      math) is built on the March 14 date, so this is genuinely load-bearing,
+      not a typo.
+    motion_quote: "On or about March 14, 2021"
+    evidence_docs: [police_report, medical_records_excerpt, witness_statement]
+    severity: material
+
+  - id: gold-disc-2
+    notes: |
+      Safety equipment. Motion fact #4 claims Rivera "was not wearing required
+      personal protective equipment at the time of the incident, including
+      fall-arrest equipment". Both the police report (Officer Ellison
+      confirmation + lanyard found attached) AND the witness statement (Diane
+      Tran direct observation) say he WAS wearing harness + lanyard, and that
+      the lanyard pulled free because the anchor point collapsed with the
+      scaffold. This contradiction is dispositive — the assumption-of-risk
+      argument and the broader negligence framing both depend on it.
+    motion_quote: "Rivera was not wearing required personal protective equipment"
+    evidence_docs: [police_report, witness_statement]
+    severity: dispositive
+
+  - id: gold-disc-3
+    notes: |
+      Who directed the work. The motion's Privette argument (section III.A)
+      rests on Apex controlling the manner of work. Both the police report
+      and the witness statement quote Harmon's project foreman Ray Donner
+      directing Rivera's crew to the east-side scaffolding that morning, and
+      dismissing a safety concern raised about it. Direct factual conflict
+      with the Privette defense.
+    motion_quote: "Apex Staffing Solutions — not Harmon — was the employer responsible for scaffolding operations"
+    evidence_docs: [police_report, witness_statement]
+    severity: dispositive
+
+  - id: gold-disc-4
+    notes: |
+      Prior knowledge of the specific defective conditions. The motion's
+      argument C (assumption of risk) treats the hazard as a generic,
+      inherent risk of scaffolding work that Rivera implicitly accepted.
+      The witness statement and the police report both document specific
+      defective conditions (rust on cross-braces, plywood-on-uneven-ground
+      base) that were reported to both Apex's Ellison and Harmon's Donner
+      before the collapse. The risk Rivera encountered was a specific
+      reported defect, not a generic trade risk.
+    motion_quote: "The risks associated with working at height on scaffolding are inherent to his trade and were well known to him"
+    evidence_docs: [witness_statement, police_report]
+    severity: material
+
+citations:
+  - id: gold-cite-1
+    notes: |
+      Privette is the load-bearing authority of the whole motion. If
+      CitationExtractor misses this, the rest of the pipeline has no surface
+      to operate on.
+    cited_authority_contains: "Privette v. Superior Court"
+
+  - id: gold-cite-2
+    notes: |
+      Federal district court citation with a multi-token reporter
+      ("F. Supp. 2d"). Regex regression here would silently miss any
+      federal-district authority.
+    cited_authority_contains: "Whitmore v. Delgado Scaffolding"
+
+  - id: gold-cite-3
+    notes: |
+      Federal circuit citation (F.2d) with a parenthesized court
+      designation. Different reporter shape from Privette.
+    cited_authority_contains: "Kellerman v. Pacific Coast Construction"
+
+  - id: gold-cite-4
+    notes: |
+      California Supreme Court 2011 cite — verifies the regex catches
+      both old (Privette 1993) and recent (Seabright 2011) Cal. Supreme
+      forms.
+    cited_authority_contains: "Seabright Insurance"
+
+  - id: gold-cite-5
+    notes: |
+      First footnote-only authority. The footnote 1 in the MSJ lists six
+      cites in a single semicolon-separated string; the regex must split
+      them. If we lose this one, we likely lose all five footnote cites.
+    cited_authority_contains: "Torres v. Granite Falls"

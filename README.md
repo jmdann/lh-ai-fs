@@ -4,6 +4,37 @@ Legal briefs lie. Not always intentionally — but they do. They cite cases that
 
 Your task: build an AI pipeline that catches it.
 
+## Status (spec 001 — foundation + cross-doc + eval)
+
+| Item | State |
+|---|---|
+| `POST /analyze` returns structured `VerificationReport` | ✅ |
+| `python run_evals.py` runs end-to-end with count gates | ✅ |
+| `CitationExtractor` (regex-first + LLM) | ✅ |
+| `CrossDocConsistencyChecker` (motion vs records) | ✅ |
+| `SourceRegistry` grounding boundary (STANDARDS § 3.6) | ✅ |
+| `QuoteChecker` + `AuthoritySupportChecker` | ⚪ spec 002 |
+| `ConfidenceScorer` + `JudicialMemoWriter` + UI rewrite | ⚪ spec 003 |
+| `REFLECTION.md` | ⚪ spec 003 |
+
+**Tests:** 136 passing, no network.
+**Eval baseline (fake mode, N=3):** 4/4 discrepancies + 5/5 citations matched, 0 grounding failures. Committed at `evals/baseline_report.md`.
+
+See `PROGRESS.md` for the full status table and `specs/001-foundation-evals-crossdoc/spec.md` for the design + codex review log.
+
+## How to run the eval suite
+
+```bash
+# Default — fake LLM, no API key required, ~1s wall clock.
+# Tests the harness + matcher; not a real model evaluation.
+python run_evals.py
+
+# Real LLM, requires OPENAI_API_KEY.
+python run_evals.py --mode real --runs 3
+```
+
+Reports land at `evals/eval_report.{json,md}`. CI gates are count-based (`matched_gold_findings ≥ 3`, `grounding_integrity_failures == 0`, etc.) — see `evals/README.md` for the rationale.
+
 ## Setup
 
 ### Docker (recommended)
