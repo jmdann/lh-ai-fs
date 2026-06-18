@@ -48,7 +48,7 @@ Full scope. Codex flagged some of these as cuttable; we kept them because the di
 
 `backend/models.py`. Everything else is downstream of these. This section was rewritten after Codex round 2 — see § 14.2 for what changed and why.
 
-**Core rule**: the LLM emits quotes, not offsets. `Span(doc_id, quote)` is what agents return; the orchestrator grounds the quote to character offsets in code via `SourceRegistry.find()`. See STANDARDS § 3.6.
+**Core rule**: `Span = (doc_id, quote)`. No offsets in the IR at all. Codex round B caught the original "offsets are optional, validators check consistency" design as untrustworthy — the LLM could still smuggle in integers and validate. The simpler fix won: drop offsets from the type entirely. Grounding becomes a boundary check (`SourceRegistry.find(doc_id, quote)` hit / miss) inside the orchestrator, not a field on `Span`. See STANDARDS § 3.6.
 
 ```python
 from datetime import datetime
@@ -73,14 +73,16 @@ class Document(BaseModel):
 # ─── Spans: quote is authoritative, offsets are derived ────────────────────
 
 class Span(BaseModel):
-    """A pointer into a document. The LLM provides doc_id + quote.
-    start/end are filled by the orchestrator via SourceRegistry.find().
-    Ungrounded spans (where find() fails) are dropped before the report returns.
+    """A pointer into a document.
+
+    The LLM emits doc_id + quote. There are no offset fields here on purpose:
+    the type system, not policy, enforces "LLMs cannot emit offsets" (STANDARDS § 3.6).
+    Grounding is the orchestrator's boundary check: SourceRegistry.find(doc_id, quote)
+    succeeds (keep the finding) or fails (drop, log grounding_integrity_failure).
     """
-    doc_id: str
-    quote: str                # what the LLM said is in the document
-    start: int | None = None  # filled in code, not by the LLM
-    end: int | None = None
+    model_config = ConfigDict(extra="forbid")  # rejects any start/end the LLM tries
+    doc_id: str = Field(min_length=1)
+    quote: str = Field(min_length=1)
 
 # ─── Claims, Citations, Quotes ─────────────────────────────────────────────
 
@@ -150,14 +152,15 @@ class Finding(BaseModel):
     prompt_version: str
     citation_id: str | None = None       # populated when kind ∈ {QUOTE_*, AUTHORITY_*}
     claim_id: str | None = None
-    # confidence + reasoning added in spec 003
+    # confidence + confidence_reasoning are added in spec 003 (their owning PR).
+    # Codex round B P2 #4: do not forward-ship fields nothing in this PR populates.
 
 # ─── Agent results: discriminated union, not Generic[T] ────────────────────
 
 class _AgentResultBase(BaseModel):
     agent: str
     prompt_version: str
-    outcome: Literal["success", "failure", "partial", "timeout"]
+    outcome: Literal["success", "failure", "partial"]   # spec 003 adds "timeout"
     error: str | None = None
     latency_ms: int
 
@@ -177,17 +180,11 @@ class AuthorityCheckResult(_AgentResultBase):
     kind: Literal["authority_check"] = "authority_check"
     data: list[AuthorityCheck] = []
 
-class ConfidenceResult(_AgentResultBase):
-    kind: Literal["confidence"] = "confidence"
-    data: list[Finding] = []          # rescored findings
-
-class MemoResult(_AgentResultBase):
-    kind: Literal["memo"] = "memo"
-    data: str | None = None
+# Spec 003 PR adds ConfidenceResult (rescored findings) and MemoResult
+# (judicial memo string). They are NOT shipped here per Codex round B P2 #4.
 
 AgentResult = Annotated[
-    Union[CitationsResult, DiscrepanciesResult, QuoteCheckResult,
-          AuthorityCheckResult, ConfidenceResult, MemoResult],
+    CitationsResult | DiscrepanciesResult | QuoteCheckResult | AuthorityCheckResult,
     Field(discriminator="kind"),
 ]
 
@@ -199,7 +196,7 @@ class VerificationReport(BaseModel):
     citations: list[Citation]
     findings: list[Finding]
     agent_results: list[AgentResult]
-    judicial_memo: str | None = None     # populated in spec 003
+    # judicial_memo: str | None = None — added in spec 003 (its owning PR).
 ```
 
 Invariants enforced in code:
@@ -531,9 +528,56 @@ Run via `/codex` with the full spec + STANDARDS as input. Six findings, all mate
 | 5 | **Accept** | § 7.4 gates on counts (`--min-matched-gold 3 --max-grounding-failures 0 --max-cited-doc-scope-failures 0`). Percentages reported in markdown for trend. |
 | 6 | **Accept — owned** | The offset-emitting LLM was the embarrassing thing. Whole IR rewrite + grounding-metric rename address it. STANDARDS now codifies "LLMs emit quotes, never offsets" (§ 3.6). |
 
-### 14.3 Codex review — post-implementation
+### 14.3 Codex review — incremental (post-PR-open)
 
-To be run via `/codex review` once the PR is open. Findings + responses appended here.
+Per RELEASE § 8, `/codex review` runs on the open PR as commits land, not only at the end. Findings logged here with the commit that addressed them.
+
+#### Round A — after commit `chore(deps)` (`05a90a3`)
+
+Three findings, all accepted. Fixed in commit `fix(deps)` (`4c4eea1`).
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | P1 | `openai >= 1.30` lower bound predates `client.responses` / `client.beta.chat.completions.parse`; a clean install can satisfy the pin and then fail at the first structured-outputs call. Codex verified against openai-python v1.30.0 API reference. | Raised floor to `>= 1.50`. |
+| 2 | P2 | `mypy.overrides.module = ["rapidfuzz.*", "pytest_socket.*"]` covers submodules only; top-level `from rapidfuzz import fuzz` still trips `--strict`. | Added bare module names alongside wildcards. |
+| 3 | P2 | `--allow-unix-socket` in pytest addopts isn't needed for FastAPI `TestClient` (httpx-based, in-process). Broader than the stated policy. | Removed; `--disable-socket` alone enforces no-network policy. |
+
+Commit-message review: clean.
+
+#### Round B — after `feat(models)` (`c73536c`)
+
+Four findings: 2 P1 + 2 P2. All accepted. Fixed in commit `fix(models)`.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | P1 | `Span(doc_id, quote, start, end)` lets the LLM smuggle in offsets as long as the pair is internally consistent. Tests reinforced the wrong shape by treating caller-supplied `start`/`end` as the happy path. Violates STANDARDS § 3.6. | Dropped offsets from `Span` entirely. The type is now `{doc_id, quote}` with `extra="forbid"`. The LLM cannot emit integer offsets because no integer field exists; grounding is the orchestrator's boundary check via `SourceRegistry.find`. STANDARDS § 3.6 and spec § 4 rewritten. |
+| 2 | P1 | `QuoteCheck.matched_span` / `AuthorityCheck.source_basis` validators checked non-None but not grounded. `QuoteCheck(verdict="exact", matched_span=Span(start=None, end=None))` passed. | Phantom problem after fix #1 — Span no longer has a "grounded" state; validators check non-None and that is now sufficient. The grounded check happens in the orchestrator, where it belongs. |
+| 3 | P2 | "JSON round-trip" coverage overstated — tests used `validate_python` / `model_validate`, never `model_validate_json`. End-to-end test only covered 3 of 6 subtypes. | Added `Span.model_validate_json` test and `_AGENT_RESULT_ADAPTER.validate_json` for every active subtype. The end-to-end report round-trip now goes through `model_dump_json` → `model_validate_json` and includes all 4 active subtypes. |
+| 4 | P2 | `Finding.confidence` + `confidence_reasoning` shipped in PR 1 despite spec saying "added in spec 003". Scope drift. | Removed: `Finding.confidence`, `Finding.confidence_reasoning`, `VerificationReport.judicial_memo`, `ConfidenceResult`, `MemoResult`, `outcome="timeout"`. All land in spec 003 PR where they're populated. Spec 001 § 4 updated to match. |
+
+Codex's "notes" (non-findings — confirmed clean): llm.py deletion safe; `backend/__init__.py` no Docker impact; discriminator union pattern correct for Pydantic v2; frozen Document sufficient; ID regexes match spec.
+
+#### Round C — after remaining implementation commits
+
+To be appended as `feat(llm)` through `docs` land.
+
+##### Reversal of Round A P2 #3 (`--allow-unix-socket`)
+
+Round A removed `--allow-unix-socket` on Codex's advice that FastAPI `TestClient`
+is httpx-based and does not need real sockets. True, but the asyncio selector
+event loop creates a Unix socketpair internally for cross-thread wake-up. Once
+`feat(llm)` introduced the first async tests (`FakeLLMClient.complete` is async
+per `LLMClient` Protocol), every async test failed at loop construction with
+`AttributeError: '_UnixSelectorEventLoop' object has no attribute '_ssock'`.
+
+Restored the flag in `feat(llm)` with an inline comment naming the trigger.
+This is not a Codex defect — the original review was correct under the
+"sync TestClient" assumption; the constraint widened when async entered the
+picture. Recording the reversal for honest narrative.
+
+### 14.4 Codex review — final pre-merge
+
+Run before flipping the PR from Draft to Ready-for-review. Same protocol as 14.3; the verbatim output gets pasted here in full.
 
 ## 15. Test plan
 
