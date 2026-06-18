@@ -47,7 +47,7 @@ exclude = ["backend/tests/fixtures", "frontend"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["rapidfuzz.*", "pytest_socket.*"]
+module = ["rapidfuzz", "rapidfuzz.*", "pytest_socket", "pytest_socket.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]
@@ -58,7 +58,7 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"
-addopts = "-q --strict-markers --disable-socket --allow-unix-socket"
+addopts = "-q --strict-markers --disable-socket"
 markers = [
   "integration: tests that exercise multiple modules together",
   "enable_socket: opt-in network access for the rare end-to-end case",
