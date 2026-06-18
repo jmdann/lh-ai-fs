@@ -559,7 +559,21 @@ Codex's "notes" (non-findings — confirmed clean): llm.py deletion safe; `backe
 
 #### Round C — after remaining implementation commits
 
-To be appended as `feat(config)` through `docs` land.
+To be appended as `feat(llm)` through `docs` land.
+
+##### Reversal of Round A P2 #3 (`--allow-unix-socket`)
+
+Round A removed `--allow-unix-socket` on Codex's advice that FastAPI `TestClient`
+is httpx-based and does not need real sockets. True, but the asyncio selector
+event loop creates a Unix socketpair internally for cross-thread wake-up. Once
+`feat(llm)` introduced the first async tests (`FakeLLMClient.complete` is async
+per `LLMClient` Protocol), every async test failed at loop construction with
+`AttributeError: '_UnixSelectorEventLoop' object has no attribute '_ssock'`.
+
+Restored the flag in `feat(llm)` with an inline comment naming the trigger.
+This is not a Codex defect — the original review was correct under the
+"sync TestClient" assumption; the constraint widened when async entered the
+picture. Recording the reversal for honest narrative.
 
 ### 14.4 Codex review — final pre-merge
 

@@ -58,7 +58,12 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"
-addopts = "-q --strict-markers --disable-socket"
+# --disable-socket blocks AF_INET / AF_INET6 (real network); --allow-unix-socket
+# re-permits AF_UNIX, which asyncio's selector event loop uses internally for
+# wake-up signaling (socketpair). The Codex round A note correctly observed
+# TestClient does not need it, but did not account for the asyncio runtime;
+# without --allow-unix-socket, every async test breaks at loop construction.
+addopts = "-q --strict-markers --disable-socket --allow-unix-socket"
 markers = [
   "integration: tests that exercise multiple modules together",
   "enable_socket: opt-in network access for the rare end-to-end case",
