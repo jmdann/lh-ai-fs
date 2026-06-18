@@ -28,6 +28,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "backend/tests/**" = ["B011", "SIM117"]
+# sources.py intentionally maps ambiguous Unicode codepoints — the
+# RUF001/RUF003 warnings are exactly what the module exists to address.
+"backend/sources.py" = ["RUF001", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"
