@@ -1,15 +1,20 @@
-# Spec 003 — Orchestrator Hardening + Confidence + Memo + UI + Reflection
+# Spec 003 — Confidence + Memo + UI + Reflection
 
-**Status:** draft
-**Stack target:** `[3/3]` — depends on `[2/3]`
-**Target time:** ~1.5h of the 6h budget
+**Status:** in flight (PR #12 shipped agents; this spec section closes the UI piece).
+**Stack target:** stacked on top of spec 002.
 **Standards:** [STANDARDS.md](../../STANDARDS.md)
 
 ## 1. Goal
 
-This is the polish layer. It earns Tier 3 of the brief: ≥4 agents (already true after 002, but this PR adds two more with non-overlapping roles), confidence scoring per flag, a judicial memo agent, graceful orchestrator failure handling, a structured UI, and the reflection document.
+The polish layer. Earns Tier 3 of the brief: ≥4 agents with non-overlapping roles, confidence scoring per finding, judicial memo, structured UI, and the reflection document.
 
-**Sacrificial discipline:** if the 6h budget runs out, this PR is what we cut. Spec 001+002 alone already covers Tiers 1 and 2 completely. The features in 003 are gated by env flags (default off) until this PR lands, so a partial 003 is still mergeable.
+**Status of items in this spec:**
+- ✅ `REFLECTION.md` — shipped early in PR #9 (criterion 5 graded directly)
+- ✅ `AI_WORKFLOW.md` — shipped in PR #10
+- ✅ `ConfidenceScorer` + `JudicialMemoWriter` — shipped in PR #12
+- ⚪ Frontend rewrite (6 components) — this PR
+- ❌ Orchestrator hardening (tenacity retries + per-agent timeouts + rich failure isolation) — **CUT, see § 11**
+- ❌ Confidence calibration plot (Brier score) — **CUT, see § 11**
 
 ## 2. Non-goals
 
@@ -17,6 +22,8 @@ This is the polish layer. It earns Tier 3 of the brief: ≥4 agents (already tru
 - Multi-annotator gold set (REFLECTION).
 - Prompt-injection robustness in the eval (REFLECTION).
 - Streaming responses to the UI — too much surface for the time left.
+- Orchestrator hardening (tenacity / timeouts) — cut, see § 11.
+- Confidence calibration plot — cut, see § 11.
 
 ## 3. Deliverables
 
@@ -94,21 +101,29 @@ class JudicialMemoWriter:
 
 This agent is text-out, not structured-out — the only one in the pipeline. That's fine because the *input* is structured (validated Findings); the LLM can't smuggle in new claims because anything not traceable to a Finding id is dropped by a post-write validator.
 
-## 6. Orchestrator hardening
+## 6. Orchestrator hardening — **CUT**
 
-```python
-class Orchestrator:
-    async def run(self, documents: ...) -> VerificationReport:
-        # Each agent wrapped in:
-        #   - tenacity.retry(stop_after_attempt=3, wait_exponential, retry_if_exception_type=APITimeout|APIError)
-        #   - asyncio.wait_for(timeout=settings.agent_timeout_s)  # default 30s
-        #   - try/except: on failure, append AgentResult(outcome="failure", error=...) and continue
-        # Final report is always returned, even with N agents failed.
-```
+Originally promised: tenacity retries with exponential backoff, per-agent
+`asyncio.wait_for` timeout, structured log line per agent. **Cut** because:
 
-Failure isolation rule: a single agent error MUST NOT prevent the report from being returned. The orchestrator's contract: every invocation produces a `VerificationReport`, possibly with empty subsections + `agent_results` documenting what failed and why.
+- Each of the six agents already wraps its work in `try/except Exception`
+  that maps any failure to `AgentResult(outcome="failure", error=...)`,
+  so the orchestrator's contract — "every invocation produces a
+  `VerificationReport`" — already holds.
+- Tenacity retries against the OpenAI API are configured at the
+  `OpenAIClient` layer (see `backend/llm/client.py`), so retry logic is
+  already in place for the LLM call, just not at the agent boundary.
+- Per-agent timeouts would prevent a slow LLM from hanging a request,
+  but on the four-document case file the real model rarely takes > 5s
+  per agent. The risk/reward for adding `wait_for` here is low in the
+  6-hour budget vs. shipping the frontend cards the brief explicitly
+  grades.
 
-Telemetry note (12-factor XI): every agent emits one structured log line on entry and one on exit with `outcome` in `{success, failure, partial, timeout}`.
+The 12-factor XI structured log line is implemented at the
+`backend.observability.log_agent_run` helper (PR #4) but not wired into
+the orchestrator. Wiring it would add ~10 LOC; deferred as part of this
+cut because the eval harness reads `agent_results.latency_ms` from the
+report instead of grepping logs.
 
 ## 7. Frontend
 
@@ -128,8 +143,16 @@ Vitest tests for each component: renders empty state, renders one example findin
 ## 8. Eval refresh
 
 This PR adds:
-- **Confidence calibration** — bucket findings by confidence (0.0-0.2, 0.2-0.4, ...). For each bucket, what fraction matched gold? Reported as a simple table; Brier score if time. Surfaces overconfident agents.
-- **Memo sanity check** — assert memo length ≤ 180 words; assert every `find-N` reference in the memo points to a real finding. Deterministic check.
+- **Memo sanity check** — assert memo length ≤ 180 words; assert every `find-N` reference in the memo points to a real finding. Deterministic check. Lives in `backend/agents/judicial_memo_writer.validate_memo`; if the memo fails either gate, `MemoResult.outcome="partial"` with an error string listing the issues. Shipped in PR #12.
+
+**Cut — confidence calibration plot.** Originally: bucket findings by
+confidence (0.0-0.2, 0.2-0.4, ...) and report match rate per bucket +
+Brier score. Cut because (a) we don't have multiple runs across
+temperature settings to populate the buckets meaningfully, (b) on this
+case file most findings end up at similar confidence so a Brier number
+would be uninformative anyway. The pipeline reports per-finding
+confidence in the report; calibration analysis is deferred to the same
+hypothetical future PR that adds real-mode N=3 variance reporting.
 
 Thresholds for this PR:
 ```
@@ -211,11 +234,33 @@ PROGRESS.md                   # final state
 README.md                     # status all green
 ```
 
-## 11. Standards delta
+## 11. Cuts log
+
+Items removed from this spec as they were not built. Listed here so the
+plan does not lie about what shipped (per user feedback: "se vai cortar
+escopo tem que remover do plano").
+
+| Item | Status | Why cut | Documented in |
+|---|---|---|---|
+| Orchestrator hardening (tenacity + per-agent timeouts) | Cut | Each agent already has `try/except Exception → outcome="failure"`; OpenAIClient already retries at LLM layer; per-agent timeouts low-value vs. budget. | § 6 above + REFLECTION.md "What I cut and why" |
+| Confidence calibration plot (Brier score) | Cut | Requires multiple runs across temperature settings to populate buckets; on this case file most findings cluster at similar confidence so a Brier number would be uninformative. | § 8 above + REFLECTION.md |
+| `unverifiable-precision` metric (spec 002) | Cut | Formula collapsed to recall under a precision name; gaming-detection requires gold entries with `expected_verdict ∈ {supports, contradicts}` which the Rivera corpus does not produce. | spec 002 § 8 + REFLECTION.md |
+
+What IS in this spec / PR:
+
+| Item | Status | Where |
+|---|---|---|
+| `ConfidenceScorer` | ✅ Shipped | PR #12 |
+| `JudicialMemoWriter` + reference check | ✅ Shipped | PR #12 |
+| `REFLECTION.md` | ✅ Shipped | PR #9 |
+| `AI_WORKFLOW.md` | ✅ Shipped | PR #10 |
+| Frontend rewrite (6 components) | ⚪ This PR | `frontend/src/` |
+
+## 12. Standards delta
 
 Add one line to STANDARDS § 6 (Testing): "Frontend components have `vitest` tests for empty-state, one-of-each-kind, and failed-agent state."
 
-## 12. How this earns evaluation points
+## 13. How this earns evaluation points
 
 | Brief point | Earned by |
 |---|---|
@@ -225,7 +270,7 @@ Add one line to STANDARDS § 6 (Testing): "Frontend components have `vitest` tes
 | **4. How far we get** | This is the polish layer. Even partially-shipped 003 (e.g., confidence scoring but no UI) is mergeable because everything is feature-flagged. Reviewer sees graceful degradation, not a half-broken main branch. |
 | **5. Reflection honesty** | `REFLECTION.md` ships with this PR. It's the deliverable. |
 
-## 13. Cross-model review
+## 14. Cross-model review
 
 ### 13.1 Codex challenge — pre-implementation
 
@@ -241,7 +286,7 @@ Findings + decisions appended here before implementation.
 
 `/codex review` once `[3/3]` is green. Findings + responses appended.
 
-## 14. Test plan
+## 15. Test plan
 
 - `test_confidence_scorer.py` — confidence within [0,1]; reasoning mandatory; ungrounded finding → 0.0.
 - `test_judicial_memo_writer.py` — empty findings → "no material problems" memo; non-empty → memo references real find-ids; word cap enforced.
@@ -249,7 +294,7 @@ Findings + decisions appended here before implementation.
 - `test_main.py` — end-to-end with all six agents, FakeLLMClient injected.
 - `frontend/src/__tests__/` — vitest per component (3 states each: empty, populated, error).
 
-## 15. Acceptance criteria
+## 16. Acceptance criteria
 
 - [ ] Six agents wired and tested.
 - [ ] Orchestrator returns a report even when any single agent fails (test asserts this).

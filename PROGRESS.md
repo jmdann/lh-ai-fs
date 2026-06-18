@@ -7,19 +7,19 @@ Tracker for the BS Detector take-home. Updated as PRs land.
 | Brief item | Status | Where |
 |---|---|---|
 | **Tier 1** Extract all citations from MSJ | ✅ | `CitationExtractor` — regex-first + LLM proposition attachment |
-| **Tier 1** Assess if cited authority supports proposition | ⚪ deferred | spec 002 — `AuthoritySupportChecker` |
-| **Tier 1** Flag direct quotes for accuracy | ⚪ deferred | spec 002 — `QuoteChecker` |
+| **Tier 1** Assess if cited authority supports proposition | ✅ | `AuthoritySupportChecker` (PR #11). Emits `unverifiable` for out-of-corpus; calls LLM when source available. |
+| **Tier 1** Flag direct quotes for accuracy | ✅ | `QuoteChecker` (PR #11). Deterministic-first + LLM fallback. |
 | **Tier 1** Structured JSON output | ✅ | `VerificationReport` Pydantic v2 model |
 | **Tier 2** Eval harness, single command | ✅ | `python run_evals.py` |
 | **Tier 2** Precision / recall / hallucination measured | ✅ | structural matcher + `grounding_integrity` |
 | **Tier 2** Cross-document consistency | ✅ | `CrossDocConsistencyChecker` |
 | **Tier 2** Express uncertainty ("could not verify") | ✅ | grounding boundary drops unverifiable spans |
 | **Tier 2** Structured data between agents | ✅ | Pydantic IR, no raw text crossing |
-| **Tier 3** ≥4 well-defined agents | ⚪ deferred | spec 002 adds Quote + Authority; spec 003 adds Confidence + Memo |
-| **Tier 3** Confidence scoring layer | ⚪ deferred | spec 003 |
-| **Tier 3** Judicial memo agent | ⚪ deferred | spec 003 |
-| **Tier 3** Graceful orchestration | ⚪ partial | spec 001 thin failure handling; spec 003 hardens (tenacity + timeouts) |
-| **Tier 3** Structured UI | ⚪ deferred | spec 003 |
+| **Tier 3** ≥4 well-defined agents | ✅ | 6 agents: CitationExtractor / CrossDocConsistencyChecker / QuoteChecker / AuthoritySupportChecker / ConfidenceScorer / JudicialMemoWriter |
+| **Tier 3** Confidence scoring layer | ✅ | `ConfidenceScorer` (PR #12). Rubric anchors to evidence concreteness; empty evidence → 0.0 without LLM call. |
+| **Tier 3** Judicial memo agent | ✅ | `JudicialMemoWriter` (PR #12). ≤180 words, deterministic `[find-N]` reference check post-write. |
+| **Tier 3** Graceful orchestration | ⚪ partial — see REFLECTION cuts | Each agent already wraps in try/except → outcome=failure. Tenacity + per-agent timeouts cut from spec 003 (§ 6 + REFLECTION). |
+| **Tier 3** Structured UI | ⚪ this PR | Frontend rewrite to 6 components (ReportSummary / MemoCard / FindingsList / FindingCard / CitationsTable / AgentTrace). |
 | **Tier 3** Reflection document | ✅ | `REFLECTION.md` — shipped early because criterion 5 (reflection honesty) is graded directly |
 
 ## Specs
