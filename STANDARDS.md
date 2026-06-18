@@ -81,15 +81,14 @@ Renaming from the original plan: `CitationVerifier` → `AuthoritySupportChecker
 - Hard cap: **40 lines** per prompt. Longer prompts mean the agent is wrong-sized — split it.
 - Every prompt must include: role line, input contract (Pydantic schema), output contract (`response_format={"type": "json_schema", ...}`), refusal rules (when to emit `unverifiable`), one worked example.
 
-### 3.6 Span identity — quote-based, never offset-based
+### 3.6 Span identity — quote-only, no offsets in the IR
 
-LLMs are bad at exact character offsets. Letting the model emit `start` / `end` integers is the fastest way to ship a pipeline whose "grounding" check passes a unit test and fails the first time a document gets normalized.
+LLMs are bad at exact character offsets. Letting the model emit `start` / `end` integers is the fastest way to ship a pipeline whose "grounding" check passes a unit test and fails the first time a document gets normalized. **The type system, not policy, must rule this out.** Codex round B (PR #1 § 14.3) flagged the original "offsets are optional" shape as untrustworthy — the LLM could still emit integers and validate.
 
 Rule:
-- The LLM emits `Span(doc_id, quote)` — never `start` / `end`.
-- The orchestrator grounds the quote to offsets in code via `SourceRegistry.find(doc_id, quote)`, which does normalized substring + fuzzy match.
-- The persisted `Span` carries `doc_id`, `quote`, and grounded `start` / `end`. The quote is authoritative; offsets are derived.
-- If `find` returns no hit, the finding is dropped at the orchestrator boundary with a logged failure. Agents do not get to launder ungrounded quotes through.
+- The `Span` type is exactly `{doc_id, quote}`. No `start`, no `end`, no offsets of any kind. Pydantic's `extra="forbid"` means any JSON the LLM emits with `start` / `end` fails at parse time.
+- Grounding is a **boundary check** done by the orchestrator, never a `Span` field: `SourceRegistry.find(doc_id, quote)` returns hit / miss. On miss, the finding is dropped and a `grounding_integrity_failure` is logged on the corresponding `AgentResult`. Agents do not get to launder ungrounded quotes through.
+- If a future spec (e.g. spec 003 UI rendering) genuinely needs offsets, it adds them as a separate `ResolvedSpan` type. The base `Span` stays narrow.
 
 This caps how badly the LLM can lie: it has to produce a quote that actually appears in a document we loaded. "I cite a string that exists somewhere" is a much weaker hallucination than "I cite (137, 198) and the model gets to define what that means".
 

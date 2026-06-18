@@ -4,13 +4,18 @@ Every agent consumes and emits these Pydantic v2 models. Raw text never
 crosses an agent boundary. See specs/001-foundation-evals-crossdoc/spec.md § 4
 and STANDARDS.md §§ 3.1, 3.6 for the load-bearing decisions:
 
-* LLMs emit ``Span(doc_id, quote)``; the orchestrator grounds to offsets
-  in code via ``SourceRegistry.find``. ``start`` / ``end`` are derived.
+* ``Span`` is ``(doc_id, quote)``. No character offsets in the IR — the
+  type system cannot be tricked by an LLM that emits integer offsets,
+  because there are no integer fields. Grounding is exclusively a
+  ``SourceRegistry`` boundary check inside the orchestrator: hit → keep,
+  miss → drop the finding. Spec 003 may add a separate ``ResolvedSpan``
+  type if UI rendering needs offsets; until then, offsets stay out.
 * ``AgentResult`` is a discriminated union, not ``Generic[T]`` — Pydantic v2
   schema generation is cleaner that way and OpenAPI consumers benefit.
-* The full IR ships in PR [1/3] (including spec-002 envelopes like
-  ``QuoteCheck`` and ``AuthorityCheck``) so the type surface does not
-  churn across PRs.
+* The IR ships spec 001 + spec 002 surface in this PR. Spec 003 additions
+  (``Finding.confidence``, ``judicial_memo``, ``ConfidenceResult``,
+  ``MemoResult``, ``outcome="timeout"``) land in their owning PR — no
+  forward-shipping of fields nothing in this PR populates.
 """
 
 from __future__ import annotations
@@ -43,35 +48,23 @@ class Document(BaseModel):
     text: str = Field(min_length=1)
 
 
-# ── Spans: quote is authoritative, offsets are derived ────────────────────
+# ── Spans: quote is the whole IR ──────────────────────────────────────────
 
 
 class Span(BaseModel):
     """A pointer into a document.
 
-    The LLM emits ``doc_id`` and ``quote``. The orchestrator fills ``start`` and
-    ``end`` after grounding the quote via ``SourceRegistry.find``. Ungrounded
-    spans are dropped at the orchestrator boundary; see STANDARDS § 3.6.
+    The LLM emits ``doc_id`` and ``quote``. There are no character offsets
+    here on purpose — STANDARDS § 3.6 says the type system, not policy,
+    enforces "LLMs can't emit offsets". Grounding is the orchestrator's
+    job: ``SourceRegistry.find(doc_id, quote)`` either succeeds (keep the
+    finding) or fails (drop it, log ``grounding_integrity_failure``).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     doc_id: str = Field(min_length=1)
     quote: str = Field(min_length=1)
-    start: int | None = Field(default=None, ge=0)
-    end: int | None = Field(default=None, ge=0)
-
-    @model_validator(mode="after")
-    def _offsets_consistent(self) -> Span:
-        if (self.start is None) != (self.end is None):
-            raise ValueError("start and end must both be set or both be None")
-        if self.start is not None and self.end is not None and self.end <= self.start:
-            raise ValueError("end must be strictly greater than start")
-        return self
-
-    @property
-    def is_grounded(self) -> bool:
-        return self.start is not None and self.end is not None
 
 
 # ── Claims, Citations, Quotes ─────────────────────────────────────────────
@@ -117,8 +110,10 @@ QuoteVerdict = Literal["exact", "paraphrase", "altered", "fabricated", "unverifi
 
 
 class QuoteCheck(BaseModel):
-    """``QuoteChecker`` (spec 002) output. Validators enforce the verdict /
-    matched_span pairing so an LLM cannot claim ``exact`` without a span."""
+    """``QuoteChecker`` (spec 002) output. The validator enforces the verdict /
+    matched_span pairing so an LLM cannot claim ``exact`` without naming a
+    span. Whether that span grounds in the source corpus is the orchestrator's
+    concern, not the model's — keep type validation orthogonal to retrieval."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -142,8 +137,8 @@ AuthorityVerdict = Literal["supports", "contradicts", "unverifiable"]
 
 class AuthorityCheck(BaseModel):
     """``AuthoritySupportChecker`` (spec 002) output. ``unverifiable`` is a
-    first-class outcome; the validator forces the agent to ground every
-    supports/contradicts judgment in an actual source span."""
+    first-class outcome; the validator forces the agent to name a source span
+    for every supports/contradicts judgment."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -200,7 +195,12 @@ class FactDiscrepancy(BaseModel):
 class Finding(BaseModel):
     """A single verification finding. ``summary`` is human-readable and is
     excluded from eval matching to prevent prompt phrasing from leaking
-    into the score (STANDARDS § 5)."""
+    into the score (STANDARDS § 5).
+
+    Confidence + reasoning are added in spec 003; they are intentionally
+    absent from this PR's IR (no field populated by spec 001 / 002 agents
+    means no field on the model).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -212,20 +212,12 @@ class Finding(BaseModel):
     prompt_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     citation_id: str | None = Field(default=None, pattern=r"^cite-\d+$")
     claim_id: str | None = Field(default=None, pattern=r"^claim-\d+$")
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    confidence_reasoning: str | None = None
-
-    @model_validator(mode="after")
-    def _confidence_reasoning_required(self) -> Finding:
-        if self.confidence is not None and not self.confidence_reasoning:
-            raise ValueError("confidence_reasoning is required when confidence is set")
-        return self
 
 
 # ── Agent results: discriminated union, one class per kind ─────────────────
 
 
-AgentOutcome = Literal["success", "failure", "partial", "timeout"]
+AgentOutcome = Literal["success", "failure", "partial"]
 
 
 class _AgentResultBase(BaseModel):
@@ -258,23 +250,8 @@ class AuthorityCheckResult(_AgentResultBase):
     data: list[AuthorityCheck] = Field(default_factory=list)
 
 
-class ConfidenceResult(_AgentResultBase):
-    kind: Literal["confidence"] = "confidence"
-    data: list[Finding] = Field(default_factory=list)
-
-
-class MemoResult(_AgentResultBase):
-    kind: Literal["memo"] = "memo"
-    data: str | None = None
-
-
 AgentResult = Annotated[
-    CitationsResult
-    | DiscrepanciesResult
-    | QuoteCheckResult
-    | AuthorityCheckResult
-    | ConfidenceResult
-    | MemoResult,
+    CitationsResult | DiscrepanciesResult | QuoteCheckResult | AuthorityCheckResult,
     Field(discriminator="kind"),
 ]
 
@@ -286,7 +263,11 @@ class VerificationReport(BaseModel):
     """The response shape of ``POST /analyze``. ``agent_results`` is the
     canonical log surface — every agent run shows up here regardless of
     whether its data is empty, so reviewers can debug a failed pipeline
-    from the report alone."""
+    from the report alone.
+
+    Spec 003 adds ``judicial_memo``; the field is intentionally absent
+    here because no spec 001 / 002 agent populates it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -295,4 +276,3 @@ class VerificationReport(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     agent_results: list[AgentResult] = Field(default_factory=list)
-    judicial_memo: str | None = None
