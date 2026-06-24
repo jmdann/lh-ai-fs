@@ -99,3 +99,40 @@ citations:
       cites in a single semicolon-separated string; the regex must split
       them. If we lose this one, we likely lose all five footnote cites.
     cited_authority_contains: "Torres v. Granite Falls"
+
+# Quote-fidelity expectations. The motion attributes direct quotes to two
+# external authorities (Privette + Kellerman); neither authority's source
+# text is loaded into the corpus, so the QuoteChecker MUST emit
+# `unverifiable` — STANDARDS § 3.5. Confident verdicts on text we cannot
+# verify are exactly the hallucination the rubric punishes.
+quotes:
+  - id: gold-quote-1
+    notes: |
+      Direct quotation attributed to Privette in motion section III.A.
+      Source text not in corpus → unverifiable.
+    cited_authority_contains: "Privette"
+    expected_verdict: unverifiable
+
+  - id: gold-quote-2
+    notes: |
+      Direct quotation attributed to Kellerman in section III.B.
+      Source text not in corpus → unverifiable.
+    cited_authority_contains: "Kellerman"
+    expected_verdict: unverifiable
+
+# Authority-support expectations. Every cited authority in the motion is
+# external case law; AuthoritySupportChecker MUST emit `unverifiable` for
+# all of them. unverifiable-precision = (gold unverifiable ∩ emitted
+# unverifiable) / (emitted unverifiable). Catches the "say IDK to
+# everything" failure mode if the agent ever starts emitting unverifiable
+# for in-corpus cases it should actually judge.
+authorities:
+  - id: gold-auth-1
+    cited_authority_contains: "Privette"
+    expected_verdict: unverifiable
+  - id: gold-auth-2
+    cited_authority_contains: "Kellerman"
+    expected_verdict: unverifiable
+  - id: gold-auth-3
+    cited_authority_contains: "Whitmore"
+    expected_verdict: unverifiable

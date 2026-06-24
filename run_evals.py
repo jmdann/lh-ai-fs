@@ -94,11 +94,28 @@ def _seed_fake_for_gold(fake: FakeLLMClient, documents: dict[str, Document], gol
             (c for c in candidates if gc.cited_authority_contains in c),
             gc.cited_authority_contains,
         )
+        # If the motion contains a direct quote attributed to this authority,
+        # propagate it so the QuoteChecker exercises its unverifiable path.
+        # We use a short, contextually plausible substring that the motion
+        # text actually contains.
+        quoted_text: str | None = None
+        if "Privette" in match_cite:
+            quoted_text = (
+                "A hirer is never liable for injuries sustained by an "
+                "independent contractor's employees when the injuries arise "
+                "from the contracted work."
+            )
+        elif "Kellerman" in match_cite:
+            quoted_text = (
+                "Where an employer demonstrates full compliance with "
+                "applicable OSHA standards, it is entitled to a rebuttable "
+                "presumption that it met the standard of care in negligence."
+            )
         citation_entries.append(
             _LLMCitation(
                 cited_authority=match_cite,
                 proposition=Span(doc_id="motion", quote=proposition_quote),
-                quoted_text=None,
+                quoted_text=quoted_text,
             )
         )
     fake.queue(
@@ -197,6 +214,8 @@ async def _main_async(args: argparse.Namespace) -> int:
             f"run {run_idx + 1}/{args.runs}: "
             f"findings={scores.matched_gold_findings}/{scores.total_gold_discrepancies}  "
             f"citations={scores.matched_gold_citations}/{scores.total_gold_citations}  "
+            f"quotes={scores.matched_gold_quotes}/{scores.total_gold_quotes}  "
+            f"authorities={scores.matched_gold_authorities}/{scores.total_gold_authorities}  "
             f"grounding_fail={scores.grounding_integrity_failures}  "
             f"scope_fail={scores.cited_doc_in_scope_failures}",
             file=sys.stderr,
@@ -234,6 +253,15 @@ async def _main_async(args: argparse.Namespace) -> int:
             f"cited_doc_in_scope_failures={head.cited_doc_in_scope_failures} "
             f"> gate {args.max_scope_failures}"
         )
+    if head.matched_gold_quotes < args.min_matched_gold_quotes:
+        failures.append(
+            f"matched_gold_quotes={head.matched_gold_quotes} < gate {args.min_matched_gold_quotes}"
+        )
+    if head.matched_gold_authorities < args.min_matched_gold_authorities:
+        failures.append(
+            f"matched_gold_authorities={head.matched_gold_authorities} "
+            f"< gate {args.min_matched_gold_authorities}"
+        )
 
     if failures:
         print("\nFAIL", file=sys.stderr)
@@ -253,6 +281,8 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--out-md", default=str(DEFAULT_OUT_MD))
     p.add_argument("--min-matched-gold-findings", type=int, default=3)
     p.add_argument("--min-matched-gold-citations", type=int, default=3)
+    p.add_argument("--min-matched-gold-quotes", type=int, default=2)
+    p.add_argument("--min-matched-gold-authorities", type=int, default=2)
     p.add_argument("--max-grounding-failures", type=int, default=0)
     p.add_argument("--max-scope-failures", type=int, default=0)
     return p
